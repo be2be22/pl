@@ -411,6 +411,37 @@ def build_app() -> FastAPI:
             "host": get_domain(request),
         }
 
+    @app.get(_PFX + "/api/debug-online")
+    async def debug_online(request: Request):
+        _guard(request)
+        import os
+        proxy_exists = os.path.exists(config.PROXY_ACCESS_LOG)
+        proxy_size = os.path.getsize(config.PROXY_ACCESS_LOG) if proxy_exists else 0
+        proxy_lines = []
+        if proxy_exists:
+            try:
+                with open(config.PROXY_ACCESS_LOG) as f:
+                    proxy_lines = f.readlines()[-5:]
+            except Exception:
+                pass
+        now = time.time()
+        active = []
+        for ip, rec in state.IP_STATS.items():
+            if now - rec.get("last", 0) < config.ONLINE_WINDOW:
+                active.append({
+                    "ip": ip,
+                    "proto": rec.get("proto", {}),
+                    "last": int(now - rec.get("last", 0)),
+                })
+        return {
+            "proxy_log_exists": proxy_exists,
+            "proxy_log_size": proxy_size,
+            "proxy_log_tail": [l.strip() for l in proxy_lines],
+            "active_ips": active,
+            "total_ip_stats": len(state.IP_STATS),
+            "total_active_ips": len(state.ACTIVE_IPS),
+        }
+
     @app.get(_PFX + "/api/axiom-ip-count")
     async def axiom_ip_count(request: Request):
         _guard(request)
