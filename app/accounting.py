@@ -22,6 +22,7 @@ from . import config, state, engine, sysmetrics, axiom_logs
 _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 _PROXY_LINE_RE = re.compile(r"^([^|]*)\|(.+?)\s+(/\S+)$")
 _PROXY_LINE_OLD = re.compile(r"^(\S+)\s+(/\S+)$")
+_proxy_read_pos: int = 0
 
 import ipaddress as _ipaddr
 _CF_NETS = tuple(
@@ -139,37 +140,55 @@ def _parse_realtime_ips() -> None:
         if ip:
             seen[ip] = seen.get(ip, 0) + 1
 
-    # Nginx proxy log — always read to keep active connections refreshed
+    # Nginx proxy log — incremental read (only new lines since last read)
     proto_seen: dict[str, dict[str, int]] = {}
-    for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES, truncate=False):
-        line = line.strip()
-        if not line:
-            continue
-        m = _PROXY_LINE_RE.match(line)
-        if m:
-            cf_ip, xff_raw, uri = m.group(1).strip(), m.group(2), m.group(3)
-            ip = _real_ip(cf_ip) if cf_ip else _real_ip(xff_raw)
-            if not ip:
-                continue
-            seen[ip] = seen.get(ip, 0) + 1
-            proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
-            if proto:
-                proto_seen.setdefault(ip, {})[proto] = (
-                    proto_seen.get(ip, {}).get(proto, 0) + 1
-                )
-            continue
-        m = _PROXY_LINE_OLD.match(line)
-        if m:
-            ip = _real_ip(m.group(1))
-            uri = m.group(2)
-            if not ip:
-                continue
-            seen[ip] = seen.get(ip, 0) + 1
-            proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
-            if proto:
-                proto_seen.setdefault(ip, {})[proto] = (
-                    proto_seen.get(ip, {}).get(proto, 0) + 1
-                )
+    global _proxy_read_pos
+    try:
+        path = config.PROXY_ACCESS_LOG
+        if os.path.exists(path):
+            size = os.path.getsize(path)
+            if size > _proxy_read_pos:
+                with open(path, "rb") as f:
+                    f.seek(_proxy_read_pos)
+                    raw = f.read()
+                _proxy_read_pos = f.tell()
+                for line in raw.decode("utf-8", errors="ignore").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    m = _PROXY_LINE_RE.match(line)
+                    if m:
+                        cf_ip, xff_raw, uri = m.group(1).strip(), m.group(2), m.group(3)
+                        ip = _real_ip(cf_ip) if cf_ip else _real_ip(xff_raw)
+                        if not ip:
+                            continue
+                        seen[ip] = seen.get(ip, 0) + 1
+                        proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
+                        if proto:
+                            proto_seen.setdefault(ip, {})[proto] = (
+                                proto_seen.get(ip, {}).get(proto, 0) + 1
+                            )
+                        continue
+                    m = _PROXY_LINE_OLD.match(line)
+                    if m:
+                        ip = _real_ip(m.group(1))
+                        uri = m.group(2)
+                        if not ip:
+                            continue
+                        seen[ip] = seen.get(ip, 0) + 1
+                        proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
+                        if proto:
+                            proto_seen.setdefault(ip, {})[proto] = (
+                                proto_seen.get(ip, {}).get(proto, 0) + 1
+                            )
+            elif size < _proxy_read_pos:
+                _proxy_read_pos = 0
+            elif size > 2097152:
+                with open(path, "w") as f:
+                    pass
+                _proxy_read_pos = 0
+    except Exception:
+        pass
 
     if not seen:
         return
