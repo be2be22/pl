@@ -24,12 +24,7 @@ _PROXY_IP_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)$")
 
 
 def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
-    """Read the TAIL of the access log (newest entries), then truncate.
-
-    v3.5: Hard cap at 128KB read (was 256KB) to prevent RAM spikes with
-    many concurrent users. Also caps returned lines at 500 to bound
-    IP_STATS processing time and memory.
-    """
+    """Read the TAIL of the access log (newest entries), then truncate."""
     if not os.path.exists(filepath):
         return []
     try:
@@ -37,19 +32,13 @@ def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
         if size == 0:
             return []
         read_bytes = min(max_bytes, 131072)
-        tmp_path = filepath + ".read"
-        os.replace(filepath, tmp_path)
-        try:
-            with open(tmp_path, "rb") as f:
-                if size > read_bytes:
-                    f.seek(-read_bytes, 2)
-                    f.readline()
-                raw = f.read()
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+        with open(filepath, "rb") as f:
+            if size > read_bytes:
+                f.seek(-read_bytes, 2)
+                f.readline()
+            raw = f.read()
+        with open(filepath, "w"):
+            pass
         text = raw.decode("utf-8", errors="ignore")
         lines = text.splitlines()
         if len(lines) > 500:
