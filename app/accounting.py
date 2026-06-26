@@ -23,6 +23,44 @@ _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 _PROXY_LINE_RE = re.compile(r"^(\S+)\s+(/\S+)$")
 
 
+def _is_cloudflare_ip(ip: str) -> bool:
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        n = (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
+    except ValueError:
+        return False
+    cf_ranges = [
+        (0x68100000, 12),
+        (0x9E0A0000, 20),
+        (0x9E720000, 20),
+        (0xA29E0000, 15),
+        (0xA69E0000, 20),
+        (0xA69F0000, 20),
+        (0xAC400000, 13),
+        (0x9D640000, 14),
+        (0xBC720000, 20),
+        (0xBC730000, 20),
+    ]
+    for base, mask in cf_ranges:
+        if (n >> (32 - mask)) == (base >> (32 - mask)):
+            return True
+    return False
+
+
+def _real_ip_from_forwarded(raw: str) -> str | None:
+    """Extract real client IP from X-Forwarded-For chain, skipping Cloudflare."""
+    for part in raw.split(","):
+        ip = part.strip()
+        if not ip or ip == "-":
+            continue
+        if _is_cloudflare_ip(ip):
+            continue
+        return ip
+    return None
+
+
 def _read_log_tail(filepath: str, max_bytes: int, truncate: bool = True) -> list[str]:
     """Read the TAIL of the access log (newest entries)."""
     if not os.path.exists(filepath):
@@ -102,9 +140,8 @@ def _parse_realtime_ips() -> None:
         m = _PROXY_LINE_RE.match(line)
         if m:
             raw_ip, uri = m.group(1), m.group(2)
-            # X-Forwarded-For may be comma-separated; first = real client
-            ip = raw_ip.split(",")[0].strip()
-            if not ip or ip == "-" or ip.startswith("100.64.") or ip == "127.0.0.1":
+            ip = _real_ip_from_forwarded(raw_ip)
+            if not ip:
                 continue
             seen[ip] = seen.get(ip, 0) + 1
             proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
