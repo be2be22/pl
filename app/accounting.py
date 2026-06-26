@@ -106,6 +106,40 @@ def _parse_grpc_log(now: float, window: float) -> dict[str, int]:
                 if not m:
                     continue
                 ip, uri, ts_str = m.group(1), m.group(2), m.group(3)
+                if not ip or ip == "-" or "." not in ip:
+                    continue
+                try:
+                    ts = float(ts_str)
+                except ValueError:
+                    continue
+                if ts < cutoff:
+                    continue
+                if _is_cloudflare_ip(ip) or ip == "127.0.0.1":
+                    continue
+                fresh[ip] = fresh.get(ip, 0) + 1
+                kept.append(line)
+        with open(path, "w") as f:
+            for line in kept:
+                f.write(line + "\n")
+        return fresh
+    except Exception:
+        return {}
+    try:
+        size = os.path.getsize(path)
+        if size == 0:
+            return {}
+        cutoff = now - window
+        fresh: dict[str, int] = {}
+        kept: list[str] = []
+        with open(path, "r", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                m = _GRPC_LINE_RE.match(line)
+                if not m:
+                    continue
+                ip, uri, ts_str = m.group(1), m.group(2), m.group(3)
                 try:
                     ts = float(ts_str)
                 except ValueError:
