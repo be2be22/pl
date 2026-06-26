@@ -21,32 +21,26 @@ from . import config, state, engine, sysmetrics, axiom_logs
 
 _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 _PROXY_LINE_RE = re.compile(r"^(.+?)\s+(/\S+)$")
+_proxy_log_size: int = 0
+
+import ipaddress as _ipaddr
+_CF_NETS = tuple(
+    _ipaddr.ip_network(n, strict=False)
+    for n in (
+        "104.16.0.0/12", "108.162.192.0/18", "131.0.72.0/22",
+        "141.101.64.0/18", "162.158.0.0/15", "172.64.0.0/13",
+        "173.245.48.0/20", "188.114.96.0/20", "190.93.240.0/20",
+        "197.234.240.0/22", "198.41.128.0/17",
+    )
+)
 
 
 def _is_cloudflare_ip(ip: str) -> bool:
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
     try:
-        n = (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
+        addr = _ipaddr.ip_address(ip)
+        return any(addr in net for net in _CF_NETS)
     except ValueError:
         return False
-    cf_ranges = [
-        (0x68100000, 12),
-        (0x9E0A0000, 20),
-        (0x9E720000, 20),
-        (0xA29E0000, 15),
-        (0xA69E0000, 20),
-        (0xA69F0000, 20),
-        (0xAC400000, 13),
-        (0x9D640000, 14),
-        (0xBC720000, 20),
-        (0xBC730000, 20),
-    ]
-    for base, mask in cf_ranges:
-        if (n >> (32 - mask)) == (base >> (32 - mask)):
-            return True
-    return False
 
 
 def _real_ip_from_forwarded(raw: str) -> str | None:
@@ -131,26 +125,32 @@ def _parse_realtime_ips() -> None:
         if ip:
             seen[ip] = seen.get(ip, 0) + 1
 
-    # Nginx proxy log (real client IPs for WS/gRPC through nginx)
-    # truncate=False: keep entries so long-lived connections stay "online"
-    # Auto-truncates when file exceeds 2MB
+    # Nginx proxy log — only read when file has grown (new connections)
+    global _proxy_log_size
     proto_seen: dict[str, dict[str, int]] = {}
-    for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES, truncate=False):
-        line = line.strip()
-        if not line:
-            continue
-        m = _PROXY_LINE_RE.match(line)
-        if m:
-            raw_ip, uri = m.group(1), m.group(2)
-            ip = _real_ip_from_forwarded(raw_ip)
-            if not ip:
+    try:
+        cur_size = os.path.getsize(config.PROXY_ACCESS_LOG) if os.path.exists(config.PROXY_ACCESS_LOG) else 0
+    except OSError:
+        cur_size = 0
+    if cur_size > _proxy_log_size:
+        _proxy_log_size = cur_size
+        for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES, truncate=True):
+            line = line.strip()
+            if not line:
                 continue
-            seen[ip] = seen.get(ip, 0) + 1
-            proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
-            if proto:
-                proto_seen.setdefault(ip, {})[proto] = (
-                    proto_seen.get(ip, {}).get(proto, 0) + 1
-                )
+            m = _PROXY_LINE_RE.match(line)
+            if m:
+                raw_ip, uri = m.group(1), m.group(2)
+                ip = _real_ip_from_forwarded(raw_ip)
+                if not ip:
+                    continue
+                seen[ip] = seen.get(ip, 0) + 1
+                proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
+                if proto:
+                    proto_seen.setdefault(ip, {})[proto] = (
+                        proto_seen.get(ip, {}).get(proto, 0) + 1
+                    )
+        _proxy_log_size = 0
 
     if not seen:
         return
