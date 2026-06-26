@@ -11,10 +11,14 @@ mkdir -p /tmp
 echo "[boot] edge router -> :$PORT"
 
 # v3.2: Apply network tuning at runtime (best-effort; needs privileged mode).
-# These settings persist in /etc/sysctl.conf from Dockerfile, but container
-# runtime may not have applied them. We try and silently ignore failures.
+# Settings are loaded from /etc/sysctl.d/99-aurora.conf (copied in Dockerfile).
+# Railway containers may not allow sysctl changes — we silently ignore failures.
 if command -v sysctl >/dev/null 2>&1; then
-    sysctl -w net.core.default_qdisc=fq 2>/dev/null || true
+    # Try loading from our config file first
+    if [ -f /etc/sysctl.d/99-aurora.conf ]; then
+        sysctl -p /etc/sysctl.d/99-aurora.conf 2>/dev/null || true
+    fi
+    # Critical settings — try individually (some may succeed even if others fail)
     sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
     sysctl -w net.ipv4.tcp_fastopen=3 2>/dev/null || true
     sysctl -w net.ipv4.tcp_slow_start_after_idle=0 2>/dev/null || true

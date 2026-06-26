@@ -11,49 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # v3.2: Network performance tuning — BBR + TCP buffers
 # These sysctl settings dramatically improve throughput on high-latency
 # or lossy links (mobile networks, Iran).
-RUN set -eux; \
-    # Persist sysctl settings for host system (Railway/Docker host)
-    cat >> /etc/sysctl.conf <<'EOF'
-
-# ── Aurora v3.2 Network Tuning ──────────────────────────
-# BBR congestion control (2-3x faster than Cubic on lossy links)
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-
-# TCP buffer sizes (allow larger windows for high-BDP links)
-net.ipv4.tcp_rmem=4096 87380 67108864
-net.ipv4.tcp_wmem=4096 65536 67108864
-net.core.rmem_max=67108864
-net.core.wmem_max=67108864
-net.core.rmem_default=262144
-net.core.wmem_default=262144
-net.core.netdev_max_backlog=5000
-
-# Disable slow-start-after-idle (keep window open for keepalive connections)
-net.ipv4.tcp_slow_start_after_idle=0
-
-# Enable MTU probing (fixes black-hole MTU issues)
-net.ipv4.tcp_mtu_probing=1
-
-# TCP Fast Open (server-side, reduces 1 RTT on reconnect)
-net.ipv4.tcp_fastopen=3
-
-# Keepalive tuning (faster detection of dead connections)
-net.ipv4.tcp_keepalive_time=600
-net.ipv4.tcp_keepalive_intvl=15
-net.ipv4.tcp_keepalive_probes=5
-
-# Increase connection backlog (handle connection bursts)
-net.core.somaxconn=8192
-net.ipv4.tcp_max_syn_backlog=8192
-
-# Disable IPv6 (avoid AAAA delays when IPv6 is broken)
-net.ipv6.conf.all.disable_ipv6=1
-net.ipv6.conf.default.disable_ipv6=1
-# ── End Network Tuning ──────────────────────────────────
-EOF
-    # Try to apply immediately (will fail in unprivileged container, that's OK)
-    sysctl -p 2>/dev/null || true
+# Settings are written to /etc/sysctl.d/ for host persistence.
+# Runtime application happens in start.sh (best-effort, may fail in unprivileged mode).
+COPY sysctl-aurora.conf /etc/sysctl.d/99-aurora.conf
 
 RUN set -eux; \
     curl -fsSL -o /tmp/c.zip \
