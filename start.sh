@@ -10,9 +10,15 @@ sed -i "s/PORT_PLACEHOLDER/$PORT/" /etc/nginx/nginx.conf
 mkdir -p /tmp
 echo "[boot] edge router -> :$PORT"
 
-# Validate the (substituted) nginx config up front. Fail fast with a readable
-# error instead of leaving the platform serving a silent 502.
-nginx -t
+# Validate the (substituted) nginx config up front.
+# On failure, print the full config + error so debugging is possible from logs.
+if ! nginx -t 2>&1; then
+    echo "[boot] FATAL: nginx config test failed. Dumping config:"
+    echo "------ nginx.conf ------"
+    cat /etc/nginx/nginx.conf
+    echo "------ end config ------"
+    exit 1
+fi
 
 # Launch nginx as a background daemon.
 nginx
@@ -20,5 +26,5 @@ nginx
 # tiny settle so the listener is up before the core registers
 sleep 1
 
-echo "[boot] control plane starting (v3.0)"
+echo "[boot] control plane starting (v3.1)"
 exec python3 /app/main.py
