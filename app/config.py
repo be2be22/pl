@@ -42,15 +42,8 @@ WS_PATH: str = _env("WS_PATH", "/ws")
 GRPC_PORT: int = 18081
 GRPC_PATH: str = _env("GRPC_PATH", "/grpc")  # serviceName in gRPC path
 
-# v3.4: Extra ports for VLESS+Reality (for users whose ISP blocks 443)
-# Reality has its own TLS, so extra ports don't need nginx.
-# Configure as comma-separated list, e.g. "2083,2053,2087"
-# Railway must TCP-proxy these ports for external access.
-EXTRA_REALITY_PORTS: list[int] = [
-    int(p.strip())
-    for p in _env("EXTRA_REALITY_PORTS", "2083").split(",")
-    if p.strip().isdigit()
-]
+# v3.5: Extra Reality ports removed (caused complexity and RAM overhead).
+# If you need alternate ports, use a reverse proxy or Railway TCP proxy manually.
 
 # ── admin auth ───────────────────────────────────────────────────────
 # SECURITY: no default password. Startup fails if ADMIN_PASSWORD not set
@@ -112,8 +105,12 @@ ONLINE_WINDOW: int = max(2 * SAMPLE_SECS, _int("ONLINE_WINDOW", 30))
 HISTORY_LEN: int = _int("HISTORY_LEN", 60)
 
 # ── IP tracking ──────────────────────────────────────────────────────
-MAX_TRACKED_IPS: int = _int("MAX_TRACKED_IPS", 500)
-IP_LOG_MAX_BYTES: int = _int("IP_LOG_MAX_BYTES", 1048576)  # 1MB tail read
+# v3.5: Reduced MAX_TRACKED_IPS from 500 to 200 to save RAM.
+# Each IP record uses ~200 bytes, so 200 IPs = ~40KB (was 100KB).
+# 200 is enough for most panels; overflow evicts oldest automatically.
+MAX_TRACKED_IPS: int = _int("MAX_TRACKED_IPS", 200)
+# v3.5: Reduced tail read from 1MB to 128KB (was causing RAM spikes)
+IP_LOG_MAX_BYTES: int = _int("IP_LOG_MAX_BYTES", 131072)  # 128KB tail read
 IP_TRACKER_INTERVAL: int = _int("IP_TRACKER_INTERVAL", 2)
 IP_EVICT_POLICY: str = _env("IP_EVICT_POLICY", "oldest")  # oldest | lowest_traffic
 

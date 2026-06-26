@@ -45,21 +45,13 @@ def grpc_link(uid: str, server: str, domain: str, label: str) -> str:
     )
 
 
-def reality_link(uid: str, label: str, sni: str = "",
-                 server: str = "", port: str = "") -> str:
-    """VLESS + Reality link.
-
-    v3.4: accepts custom server and port for extra Reality ports (e.g. 2083).
-    If not provided, uses TCP_PROXY_DOMAIN and TCP_PROXY_PORT from config.
-    """
+def reality_link(uid: str, label: str, sni: str = "") -> str:
     r = state.STATS["reality"]
-    srv = server or config.TCP_PROXY_DOMAIN
-    prt = port or config.TCP_PROXY_PORT
-    if not (srv and r.get("pub")):
+    if not (config.TCP_PROXY_DOMAIN and r.get("pub")):
         return ""
     final_sni = _reality_sni(sni)
     return (
-        f"vless://{uid}@{srv}:{prt}"
+        f"vless://{uid}@{config.TCP_PROXY_DOMAIN}:{config.TCP_PROXY_PORT}"
         f"?encryption=none&security=reality&sni={final_sni}&fp=chrome"
         f"&pbk={r['pub']}&sid={r['sid']}&type=tcp&flow=xtls-rprx-vision"
         f"#{_encode_label(label)}"
@@ -86,20 +78,9 @@ def build_links(uid: str, user: dict, domain: str) -> dict:
 
     if "reality" in protos:
         user_sni = user.get("reality_sni", "")
-        # Main Reality link (port 443 or TCP_PROXY_PORT)
         link = reality_link(uid, label, user_sni)
         if link:
             links.append(link)
-        # v3.4: Extra Reality links on alternate ports (e.g. 2083)
-        # These use the same server/domain but different port.
-        # User must set RAILWAY_TCP_PROXY_DOMAIN for these to work.
-        for extra_port in config.EXTRA_REALITY_PORTS:
-            extra_link = reality_link(
-                uid, f"{label}-Port{extra_port}", user_sni,
-                port=str(extra_port),
-            )
-            if extra_link:
-                links.append(extra_link)
 
     sub_b64 = base64.b64encode("\n".join(links).encode()).decode()
 
@@ -175,23 +156,6 @@ def clash_config(uid: str, user: dict, domain: str) -> str:
             "reality-opts": {"public-key": r["pub"], "short-id": r["sid"]},
             "client-fingerprint": "chrome",
         })
-        # v3.4: Extra Reality proxies on alternate ports
-        for extra_port in config.EXTRA_REALITY_PORTS:
-            names.append(f"{label}-Port{extra_port}")
-            proxies.append({
-                "name": f"{label}-Port{extra_port}",
-                "type": "vless",
-                "server": config.TCP_PROXY_DOMAIN,
-                "port": extra_port,
-                "uuid": uid,
-                "udp": True,
-                "tls": True,
-                "flow": "xtls-rprx-vision",
-                "servername": _reality_sni(user.get("reality_sni", "")),
-                "network": "tcp",
-                "reality-opts": {"public-key": r["pub"], "short-id": r["sid"]},
-                "client-fingerprint": "chrome",
-            })
 
     doc = {
         "proxies": proxies,

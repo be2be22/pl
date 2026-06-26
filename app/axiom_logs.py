@@ -221,7 +221,14 @@ async def trim_dataset_before_date(before_date_str: str) -> dict:
 
     end_time = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     start_time = "2020-01-01T00:00:00Z"
-    payload = {"startTime": start_time, "endTime": end_time}
+    # v3.5: Axiom trim API requires maxDuration field (HTTP 422 fix)
+    # maxDuration specifies how long the trim operation can run (in nanoseconds).
+    # 5 minutes = 300000000000 ns is generous for large datasets.
+    payload = {
+        "startTime": start_time,
+        "endTime": end_time,
+        "maxDuration": "300000000000",  # 5 minutes in nanoseconds
+    }
     headers = {
         "Authorization": f"Bearer {config.AXIOM_TOKEN}",
         "Content-Type": "application/json",

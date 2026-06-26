@@ -25,20 +25,16 @@ _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
     """Read the TAIL of the access log (newest entries), then truncate.
 
-    v3.3 fix: previously used f.readlines() which loads the ENTIRE file into
-    memory at once — on busy servers with loglevel=info, the access.log can
-    grow to hundreds of MB between cycles, causing RAM spikes.
-    Now we read only the last `max_bytes` bytes via seek, never loading the
-    whole file. We also cap the number of lines returned to prevent runaway
-    memory usage in IP_STATS.
+    v3.5: Hard cap at 128KB read (was 256KB) to prevent RAM spikes with
+    many concurrent users. Also caps returned lines at 500 to bound
+    IP_STATS processing time and memory.
     """
     if not os.path.exists(filepath):
         return []
     try:
         size = os.path.getsize(filepath)
-        # Cap the actual read to a reasonable maximum (256KB) regardless of
-        # what max_bytes says — we only need recent lines for IP tracking.
-        read_bytes = min(max_bytes, 262144)
+        # v3.5: Hard cap at 128KB regardless of max_bytes parameter
+        read_bytes = min(max_bytes, 131072)
         with open(filepath, "rb") as f:
             if size > read_bytes:
                 f.seek(-read_bytes, 2)  # seek from end
@@ -49,7 +45,11 @@ def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
             pass
         # Decode and split into lines (memory-efficient)
         text = raw.decode("utf-8", errors="ignore")
-        return text.splitlines()
+        lines = text.splitlines()
+        # v3.5: Cap at 500 lines to bound processing time
+        if len(lines) > 500:
+            lines = lines[-500:]
+        return lines
     except Exception:
         return []
 
@@ -407,12 +407,15 @@ async def loop() -> None:
                                 rec["down_delta"] = 0
 
             # Fire-and-forget Axiom shipping (don't block accounting loop)
+            # v3.5: Cap payload sizes to prevent RAM spikes with many IPs
             if config.AXIOM_TOKEN:
                 logs = engine.get_logs()
                 if logs:
-                    _spawn(_safe_send_to_axiom(logs, "xray_log"))
+                    # Cap at 50 logs per cycle to avoid huge payloads
+                    _spawn(_safe_send_to_axiom(logs[:50], "xray_log"))
                 if ip_payload:
-                    _spawn(_safe_send_to_axiom(ip_payload, "ip_traffic"))
+                    # Cap at 50 IP records per cycle
+                    _spawn(_safe_send_to_axiom(ip_payload[:50], "ip_traffic"))
 
         except Exception as e:
             state.log_error(f"accounting: {e}")

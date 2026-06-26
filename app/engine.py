@@ -24,7 +24,8 @@ _proc: subprocess.Popen | None = None
 _proc_lock = threading.Lock()
 _resync_needed: bool = False
 _resync_failures: int = 0
-_log_queue: deque = deque(maxlen=500)
+# v3.5: Reduced from 500 to 100 to save RAM (each line ~200 bytes)
+_log_queue: deque = deque(maxlen=100)
 
 
 def get_logs() -> list[str]:
@@ -112,19 +113,11 @@ def _active(u: dict, uid: str) -> bool:
     return True
 
 
-def _ws_inbound(clients: list, port: int | None = None, tag: str = "ws",
-                listen: str = "127.0.0.1") -> dict:
-    """VLESS + WebSocket inbound.
-
-    v3.3: accepts custom port and tag so we can spawn extra WS listeners
-    on alternate ports (e.g. 2083) for users whose ISP blocks 443.
-    Extra ports listen on 0.0.0.0 (direct, no nginx) since nginx only
-    listens on the main PORT.
-    """
+def _ws_inbound(clients: list) -> dict:
     return {
-        "tag": tag,
-        "listen": listen,
-        "port": port if port is not None else config.WS_PORT,
+        "tag": "ws",
+        "listen": "127.0.0.1",
+        "port": config.WS_PORT,
         "protocol": "vless",
         "settings": {"clients": clients, "decryption": "none"},
         "streamSettings": {
@@ -158,18 +151,12 @@ def _grpc_inbound(clients: list) -> dict:
     }
 
 
-def _reality_inbound(clients: list, port: int | None = None, tag: str = "reality") -> dict:
-    """VLESS + Reality inbound.
-
-    v3.4: accepts custom port and tag so we can spawn extra Reality listeners
-    on alternate ports (e.g. 2083) for users whose ISP blocks 443.
-    Reality has its own TLS, so no nginx needed for these ports.
-    """
+def _reality_inbound(clients: list) -> dict:
     r = state.STATS["reality"]
     return {
-        "tag": tag,
+        "tag": "reality",
         "listen": "0.0.0.0",
-        "port": port if port is not None else config.REALITY_APP_PORT,
+        "port": config.REALITY_APP_PORT,
         "protocol": "vless",
         "settings": {"clients": clients, "decryption": "none"},
         "streamSettings": {
@@ -231,19 +218,11 @@ def build_config() -> dict:
     if grpc_clients:
         inbounds.append(_grpc_inbound(grpc_clients))
     inbounds.append(_reality_inbound(re_clients))
-    # v3.4: Extra Reality inbounds on alternate ports (e.g. 2083)
-    # Reality has its own TLS, so these work without nginx.
-    # Each extra port gets its own tag so Xray API add/remove works per-tag.
-    for extra_port in config.EXTRA_REALITY_PORTS:
-        inbounds.append(
-            _reality_inbound(re_clients, port=extra_port, tag=f"reality{extra_port}")
-        )
 
     # Apply sockopt to all transport inbounds (skip api inbound)
     for ib in inbounds:
         tag = ib.get("tag", "")
-        # Match "ws", "grpc", "reality", "reality2083" etc.
-        if tag in ("ws", "grpc") or tag.startswith("ws") or tag.startswith("reality"):
+        if tag in ("ws", "grpc", "reality"):
             ss = ib.setdefault("streamSettings", {})
             ss.setdefault("sockopt", {}).update(inbound_sockopt)
 
@@ -458,24 +437,16 @@ async def _api(*args: str, timeout: int = 5) -> tuple[int, str]:
 
 
 async def hot_add(uid: str) -> bool:
-    """Add user to running Xray via API. Returns True if all protocols OK.
-
-    v3.4: Also adds user to extra Reality inbounds (reality2083, etc.) if configured.
-    """
+    """Add user to running Xray via API. Returns True if all protocols OK."""
     with state.lock:
         u = state.USERS.get(uid)
         if not u:
             return False
         protos = list(u.get("protocols", ["ws", "grpc", "reality"]))
-    # Build full tag list: original protos + extra port tags
-    tags = list(protos)
-    if "reality" in protos:
-        for extra_port in config.EXTRA_REALITY_PORTS:
-            tags.append(f"reality{extra_port}")
     ok = True
-    for tag in tags:
+    for tag in protos:
         args = ["adu", f"-tag={tag}", f"-id={uid}", f"-email={uid}"]
-        if tag == "reality" or tag.startswith("reality"):
+        if tag == "reality":
             args.append("-flow=xtls-rprx-vision")
         rc, _ = await _api(*args)
         if rc != 0:
@@ -484,14 +455,8 @@ async def hot_add(uid: str) -> bool:
 
 
 async def hot_remove(uid: str) -> None:
-    """Remove user from running Xray via API. Ignores 'not found' (rc=2).
-
-    v3.4: Also removes from extra Reality inbounds.
-    """
-    tags = ["ws", "grpc", "reality"]
-    for extra_port in config.EXTRA_REALITY_PORTS:
-        tags.append(f"reality{extra_port}")
-    for tag in tags:
+    """Remove user from running Xray via API. Ignores 'not found' (rc=2)."""
+    for tag in ("ws", "grpc", "reality"):
         await _api("rmu", f"-tag={tag}", f"-email={uid}", timeout=4)
 
 

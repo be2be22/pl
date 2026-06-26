@@ -45,7 +45,5 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /app/start.sh
 
 EXPOSE 8080
-# v3.3: Extra WS ports (default 2083; configurable via EXTRA_WS_PORTS env)
-EXPOSE 2083 2053 2087
 
 CMD ["/app/start.sh"]
