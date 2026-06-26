@@ -20,6 +20,9 @@ import time
 from . import config, state, engine, sysmetrics, axiom_logs
 
 _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
+# Xray access log includes the inbound tag: "... accepted ... [ws -> freedom]"
+# We use this to detect WS connections that arrive via PROXY Protocol.
+_ACCEPTED_TAG_RE = re.compile(r"\[(\w+)\s*->")
 _PROXY_LINE_RE = re.compile(r"^([^|]*)\|(.+?)\s+(/\S+)$")
 _PROXY_LINE_OLD = re.compile(r"^(\S+)\s+(/\S+)$")
 _proxy_read_pos: int = 0
@@ -99,16 +102,24 @@ def _read_log_tail(filepath: str, max_bytes: int, truncate: bool = True) -> list
         return []
 
 
-def _extract_client_ip(line: str) -> str | None:
+def _extract_client_ip(line: str) -> tuple[str | None, str | None]:
+    """Return (ip, proto) parsed from an Xray access log line, or (None, None)."""
     m = _ACCEPTED_RE.search(line)
     if not m:
-        return None
+        return None, None
     ip = m.group(1)
     if ip == "127.0.0.1" or ip.startswith("100.64.") or ip == "-":
-        return None
+        return None, None
     if _is_cloudflare_ip(ip):
-        return None
-    return ip
+        return None, None
+    # Detect inbound tag — Xray writes "[ws -> freedom]" or "[reality -> freedom]"
+    proto: str | None = None
+    tag_m = _ACCEPTED_TAG_RE.search(line)
+    if tag_m:
+        tag = tag_m.group(1)
+        if tag in ("ws", "grpc", "reality"):
+            proto = tag
+    return ip, proto
 
 
 def _evict_oldest_ip() -> None:
@@ -132,13 +143,18 @@ def _parse_realtime_ips() -> None:
     now = time.time()
     seen: dict[str, int] = {}
 
-    # Xray access log (direct connections, Reality)
+    # Xray access log — direct connections (Reality) + WS via PROXY Protocol.
+    # Xray logs the connection when it OPENS, so active sessions are visible immediately.
     for line in _read_log_tail(
         config.CORE_CFG_ACCESS_LOG, config.IP_LOG_MAX_BYTES
     ):
-        ip = _extract_client_ip(line)
+        ip, proto = _extract_client_ip(line)
         if ip:
             seen[ip] = seen.get(ip, 0) + 1
+            if proto:
+                proto_seen.setdefault(ip, {})[proto] = (
+                    proto_seen.get(ip, {}).get(proto, 0) + 1
+                )
 
     # Nginx proxy log — incremental read (only new lines since last read)
     proto_seen: dict[str, dict[str, int]] = {}

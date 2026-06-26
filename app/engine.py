@@ -128,6 +128,10 @@ def _ws_inbound(clients: list) -> dict:
             "network": "ws",
             "security": "none",
             "wsSettings": {"path": config.WS_PATH},
+            # acceptProxyProtocol lets Xray read the real client IP that the
+            # nginx stream proxy injects via the PROXY Protocol header.
+            # Without this, Xray only sees 127.0.0.1 (nginx) as the source.
+            "sockopt": {"acceptProxyProtocol": True},
         },
     }
 
