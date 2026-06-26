@@ -31,6 +31,7 @@ _CF_NETS = tuple(
         "141.101.64.0/18", "162.158.0.0/15", "172.64.0.0/13",
         "173.245.48.0/20", "188.114.96.0/20", "190.93.240.0/20",
         "197.234.240.0/22", "198.41.128.0/17",
+        "89.222.0.0/15", "172.70.0.0/15", "172.68.0.0/14",
     )
 )
 
@@ -140,9 +141,8 @@ def _parse_realtime_ips() -> None:
                 continue
             m = _PROXY_LINE_RE.match(line)
             if m:
-                raw_ip, uri = m.group(1), m.group(2)
-                ip = _real_ip_from_forwarded(raw_ip)
-                if not ip:
+                ip, uri = m.group(1).strip(), m.group(2)
+                if not ip or ip == "-" or _is_cloudflare_ip(ip):
                     continue
                 seen[ip] = seen.get(ip, 0) + 1
                 proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
