@@ -12,8 +12,6 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 
-import httpx
-
 from . import config, state
 from .http_util import axiom_client
 
@@ -234,29 +232,28 @@ async def trim_dataset_before_date(before_date_str: str) -> dict:
         "Content-Type": "application/json",
     }
     try:
-        # v3.4: Axiom trim API uses POST, not DELETE (HTTP 405 error fix)
-        async with httpx.AsyncClient(timeout=30) as trim_client:
-            r = await trim_client.post(
-                f"{AXIOM_API_URL}/v2/datasets/{config.AXIOM_DATASET}/trim",
-                headers=headers,
-                json=payload,
-            )
-            if r.status_code in (200, 202, 204):
-                return {
-                    "ok": True,
-                    "message": (
-                        f"✅ داده‌های قبل از <b>{before_date_str}</b> "
-                        f"از dataset <code>{config.AXIOM_DATASET}</code> حذف شدند."
-                    ),
-                }
-            err = r.text[:200]
-            state.log_error(f"Axiom Trim Failed: HTTP {r.status_code} - {err}")
+        client = await axiom_client.get()
+        r = await client.post(
+            f"{AXIOM_API_URL}/v2/datasets/{config.AXIOM_DATASET}/trim",
+            headers=headers,
+            json=payload,
+        )
+        if r.status_code in (200, 202, 204):
             return {
-                "ok": False,
+                "ok": True,
                 "message": (
-                    f"❌ خطا از Axiom: HTTP {r.status_code}\n<pre>{err}</pre>"
+                    f"✅ داده‌های قبل از <b>{before_date_str}</b> "
+                    f"از dataset <code>{config.AXIOM_DATASET}</code> حذف شدند."
                 ),
             }
+        err = r.text[:200]
+        state.log_error(f"Axiom Trim Failed: HTTP {r.status_code} - {err}")
+        return {
+            "ok": False,
+            "message": (
+                f"❌ خطا از Axiom: HTTP {r.status_code}\n<pre>{err}</pre>"
+            ),
+        }
     except Exception as e:
         state.log_error(f"Axiom Trim Exception: {e}")
         return {"ok": False, "message": f"❌ خطای شبکه: {e}"}

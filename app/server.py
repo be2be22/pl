@@ -15,6 +15,7 @@ v3 changes:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -52,7 +53,7 @@ from .services import user_service
 
 
 # ── QR cache (keyed by sid for safe invalidation) ───────────────────
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=256)
 def _cached_qr_svg(data: str) -> str:
     return segno.make(data, error="m").svg_inline(
         scale=6, dark="#0b1020", light="#ffffff"
@@ -584,11 +585,10 @@ def build_app() -> FastAPI:
             b in ua for b in ("mozilla", "chrome", "safari", "firefox", "edge", "opera")
         )
         if not is_browser:
-            import base64 as _b64
             used = state.user_used(uid)
             title_b64 = (
                 "base64:"
-                + _b64.b64encode(
+                + base64.b64encode(
                     u_copy.get("label", "Aurora").encode()
                 ).decode()
             )

@@ -15,7 +15,6 @@ import asyncio
 import html
 import io
 import time
-import uuid
 
 from . import config, engine, geo, ghsync, state, storage, subs, util
 from . import security as _security
@@ -27,6 +26,7 @@ _API = "https://api.telegram.org"
 # Conversation state (multi-step flows like "create user")
 _CONV: dict[int, dict] = {}
 _CONV_TTL = 600  # 10 minutes
+_CONV_MAX = 100
 _conv_lock = asyncio.Lock()
 
 # Cache for discovered domain (set from webhook request)
@@ -143,6 +143,12 @@ def _gc_conv() -> None:
     expired = [c for c, v in _CONV.items() if now - v.get("ts", 0) > _CONV_TTL]
     for cid in expired:
         _CONV.pop(cid, None)
+    if len(_CONV) > _CONV_MAX:
+        oldest = sorted(_CONV.keys(), key=lambda k: _CONV[k].get("ts", 0))[
+            : len(_CONV) - _CONV_MAX
+        ]
+        for cid in oldest:
+            _CONV.pop(cid, None)
 
 
 def _set_conv(chat_id: int, flow: str, step: str, data: dict | None = None) -> None:
@@ -551,7 +557,10 @@ async def _on_callback(cb: dict) -> None:
         body = "\n".join(f"• {_esc(t)}" for _, t in items) or "لاگی ثبت نشده."
         await send(chat_id, f"📜 <b>لاگ‌های اخیر</b>\n\n<pre>{body}</pre>", [_back_btn()], edit_id=msg_id)
     elif data.startswith("users:"):
-        page = int(data.split(":")[1])
+        try:
+            page = int(data.split(":")[1])
+        except (ValueError, IndexError):
+            page = 0
         txt, kb = _users_page(page)
         await send(chat_id, txt, kb, edit_id=msg_id)
     elif data.startswith("u:"):
@@ -563,14 +572,20 @@ async def _on_callback(cb: dict) -> None:
     elif data.startswith("cfg:"):
         await _send_user_config(chat_id, data[4:])
     elif data.startswith("adddays:"):
-        _, uid, n = data.split(":")
-        await user_service.add_days(uid, int(n))
+        try:
+            _, uid, n = data.split(":")
+            await user_service.add_days(uid, int(n))
+        except (ValueError, IndexError):
+            pass
         d = _user_detail(uid)
         if d:
             await send(chat_id, "✅ تمدید شد.\n\n" + d[0], d[1], edit_id=msg_id)
     elif data.startswith("addgb:"):
-        _, uid, n = data.split(":")
-        await user_service.add_gb(uid, float(n))
+        try:
+            _, uid, n = data.split(":")
+            await user_service.add_gb(uid, float(n))
+        except (ValueError, IndexError):
+            pass
         d = _user_detail(uid)
         if d:
             await send(chat_id, "✅ حجم اضافه شد.\n\n" + d[0], d[1], edit_id=msg_id)
@@ -662,7 +677,13 @@ async def _on_plan(chat_id: int, msg_id: int, choice: str) -> None:
         await send(chat_id, "روز و حجم (گیگ) را با کاما بفرستید. مثال: <code>30,50</code>\n(حجم ۰ = نامحدود)")
         return
     plans = _plans()
-    idx = int(choice)
+    try:
+        idx = int(choice)
+        if idx < 0 or idx >= len(plans):
+            raise ValueError
+    except (ValueError, TypeError):
+        await send(chat_id, "انتخاب نامعتبر.", _main_menu())
+        return
     _, days, gb = plans[idx]
     uid, _ = await user_service.create_user(label=label, days=days, gb=gb)
     _clear_conv(chat_id)

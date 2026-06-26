@@ -11,6 +11,7 @@ Benefits:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -43,7 +44,7 @@ class ReusableClient:
         self._idle = idle_timeout
         self._client: httpx.AsyncClient | None = None
         self._ts: float = 0.0
-        self._lock = __import__("asyncio").Lock()
+        self._lock = asyncio.Lock()
 
     async def get(self) -> httpx.AsyncClient:
         async with self._lock:

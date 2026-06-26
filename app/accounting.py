@@ -33,20 +33,24 @@ def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
         return []
     try:
         size = os.path.getsize(filepath)
-        # v3.5: Hard cap at 128KB regardless of max_bytes parameter
+        if size == 0:
+            return []
         read_bytes = min(max_bytes, 131072)
-        with open(filepath, "rb") as f:
-            if size > read_bytes:
-                f.seek(-read_bytes, 2)  # seek from end
-                f.readline()  # discard partial first line (in middle of a record)
-            raw = f.read()
-        # Truncate immediately (before parsing) so Xray starts fresh
-        with open(filepath, "w"):
-            pass
-        # Decode and split into lines (memory-efficient)
+        tmp_path = filepath + ".read"
+        os.replace(filepath, tmp_path)
+        try:
+            with open(tmp_path, "rb") as f:
+                if size > read_bytes:
+                    f.seek(-read_bytes, 2)
+                    f.readline()
+                raw = f.read()
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
         text = raw.decode("utf-8", errors="ignore")
         lines = text.splitlines()
-        # v3.5: Cap at 500 lines to bound processing time
         if len(lines) > 500:
             lines = lines[-500:]
         return lines
@@ -308,12 +312,15 @@ async def loop() -> None:
             await asyncio.to_thread(sysmetrics.refresh)
 
             if engine.should_backoff():
-                # Skip resync attempt during backoff window
                 pass
             elif not engine.alive() or engine.resync_pending():
                 await asyncio.to_thread(engine.resync)
-                await asyncio.sleep(2)
                 engine.reset_backoff()
+                if not engine.alive():
+                    backoff = engine.get_backoff_secs()
+                    if backoff > 0:
+                        await asyncio.sleep(min(backoff, 30))
+                        continue
 
             data = await engine.query_stats()
             up_delta = down_delta = 0

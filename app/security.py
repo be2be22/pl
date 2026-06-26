@@ -9,6 +9,7 @@ v3 changes:
 from __future__ import annotations
 
 import hmac
+import secrets
 import time
 from typing import Optional
 
@@ -59,7 +60,6 @@ def set_password(new_pw: str) -> None:
 # SESSIONS[token] = [absolute_expiry, last_activity_ts]
 def open_session() -> str:
     """Create a new session. Returns the opaque token."""
-    import secrets
     token = secrets.token_urlsafe(32)
     now = time.time()
     with state.lock:

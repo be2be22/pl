@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import secrets
 import subprocess
@@ -214,10 +215,10 @@ def build_config() -> dict:
         _api_inbound(),
         _ws_inbound(ws_clients),
     ]
-    # Only include gRPC inbound if there are clients (avoids empty listener)
     if grpc_clients:
         inbounds.append(_grpc_inbound(grpc_clients))
-    inbounds.append(_reality_inbound(re_clients))
+    if re_clients:
+        inbounds.append(_reality_inbound(re_clients))
 
     # Apply sockopt to all transport inbounds (skip api inbound)
     for ib in inbounds:
@@ -318,7 +319,6 @@ def _spawn() -> bool:
             json.dump(cfg, f, separators=(",", ":"))
 
         # Ensure access log directory exists (Xray won't create it)
-        import os
         access_log_dir = os.path.dirname(config.CORE_CFG_ACCESS_LOG)
         if access_log_dir:
             os.makedirs(access_log_dir, exist_ok=True)
@@ -364,7 +364,6 @@ def _get_backoff() -> float:
     global _resync_failures
     if _resync_failures <= 0:
         return 0.0
-    import math
     secs = min(
         config.ENGINE_RESYNC_BACKOFF_BASE * (2 ** (_resync_failures - 1)),
         config.ENGINE_RESYNC_BACKOFF_MAX,
@@ -396,13 +395,6 @@ def resync() -> None:
             _resync_failures = 0
         else:
             _resync_failures += 1
-            backoff = _get_backoff()
-            if backoff > 0:
-                state.log_error(
-                    f"core resync failed ({_resync_failures}x); "
-                    f"backing off {backoff:.0f}s"
-                )
-                time.sleep(backoff)
     except Exception as e:
         state.log_error(f"core resync: {e}")
         with _proc_lock:
@@ -504,3 +496,8 @@ def resync_pending() -> bool:
 def reset_backoff() -> None:
     global _resync_failures
     _resync_failures = 0
+
+
+def get_backoff_secs() -> float:
+    """Return current backoff duration in seconds (0 if no backoff)."""
+    return _get_backoff()

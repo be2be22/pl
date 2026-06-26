@@ -41,7 +41,7 @@ SYS: dict = {
 
 # ── logs & sessions ──────────────────────────────────────────────────
 ERRORS: deque = deque(maxlen=50)
-SESSIONS: dict[str, float] = {}  # token -> expiry (absolute)
+SESSIONS: dict[str, list | float] = {}  # token -> [abs_exp, last_activity] or float (legacy)
 RATE: dict[str, list] = {}  # key -> [count, timestamp]
 
 # ── indexes ──────────────────────────────────────────────────────────
@@ -124,10 +124,13 @@ def online_count() -> int:
     if now - _snapshot_ts < 5 and _snapshot_ts > 0:
         return _snapshot_online
     with lock:
+        now_locked = time.time()
+        if now_locked - _snapshot_ts < 5 and _snapshot_ts > 0:
+            return _snapshot_online
         _snapshot_online = sum(
-            1 for t in LAST_ACTIVE.values() if now - t < 120
+            1 for t in LAST_ACTIVE.values() if now_locked - t < 120
         )
-        _snapshot_ts = now
+        _snapshot_ts = now_locked
     return _snapshot_online
 
 

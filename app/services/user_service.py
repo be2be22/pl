@@ -18,14 +18,7 @@ def _new_uid() -> str:
     return str(uuid.uuid4())
 
 
-def _active(u: dict, uid: str) -> bool:
-    if u.get("status") in ("disabled", "expired"):
-        return False
-    if u.get("expiry") and time.time() > u["expiry"]:
-        return False
-    if u.get("quota") and state.user_used(uid) >= u["quota"]:
-        return False
-    return True
+_active = engine._active
 
 
 def _sanitize_protos(protos: list[str] | None) -> list[str]:

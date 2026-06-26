@@ -6,8 +6,6 @@ adjusted via environment variables without touching application code.
 from __future__ import annotations
 
 import os
-import secrets as _secrets
-import sys
 from pathlib import Path
 
 
