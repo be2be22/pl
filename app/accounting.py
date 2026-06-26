@@ -53,7 +53,7 @@ def _extract_client_ip(line: str) -> str | None:
     if not m:
         return None
     ip = m.group(1)
-    if ip.startswith("100.64.") or ip == "-":
+    if ip == "127.0.0.1" or ip.startswith("100.64.") or ip == "-":
         return None
     return ip
 
@@ -95,7 +95,7 @@ def _parse_realtime_ips() -> None:
         m = _PROXY_IP_RE.match(line)
         if m:
             ip = m.group(1)
-            if not ip.startswith("100.64.") and ip != "-":
+            if ip != "127.0.0.1" and not ip.startswith("100.64.") and ip != "-":
                 seen[ip] = seen.get(ip, 0) + 1
 
     if not seen:

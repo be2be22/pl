@@ -365,11 +365,26 @@ def build_app() -> FastAPI:
             history = list(state.STATS["history"])[-90:]
             active_ips = len(state.ACTIVE_IPS)
             total_ips = len(state.IP_STATS)
+            now = time.time()
+            online_ws = 0
+            online_grpc = 0
+            online_reality = 0
+            for uid, u in users:
+                if (now - state.LAST_ACTIVE.get(uid, 0)) >= config.ONLINE_WINDOW:
+                    continue
+                protos = u.get("protocols", [])
+                if "ws" in protos:
+                    online_ws += 1
+                if "grpc" in protos:
+                    online_grpc += 1
+                if "reality" in protos:
+                    online_reality += 1
         sys = state.SYS
         return {
             "totals": {"up": tu, "down": td, "all": tu + td},
             "speed": {"up": sys["tx_bps"], "down": sys["rx_bps"]},
             "online": state.online_count(),
+            "online_proto": {"ws": online_ws, "grpc": online_grpc, "reality": online_reality},
             "users": {
                 "total": len(users),
                 "active": active,
