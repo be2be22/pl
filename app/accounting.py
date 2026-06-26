@@ -23,8 +23,8 @@ _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 _PROXY_LINE_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+(/\S+)$")
 
 
-def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
-    """Read the TAIL of the access log (newest entries), then truncate."""
+def _read_log_tail(filepath: str, max_bytes: int, truncate: bool = True) -> list[str]:
+    """Read the TAIL of the access log (newest entries)."""
     if not os.path.exists(filepath):
         return []
     try:
@@ -37,8 +37,12 @@ def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
                 f.seek(-read_bytes, 2)
                 f.readline()
             raw = f.read()
-        with open(filepath, "w"):
-            pass
+        if truncate:
+            with open(filepath, "w"):
+                pass
+        elif size > 2097152:
+            with open(filepath, "w"):
+                pass
         text = raw.decode("utf-8", errors="ignore")
         lines = text.splitlines()
         if len(lines) > 500:
@@ -88,8 +92,10 @@ def _parse_realtime_ips() -> None:
             seen[ip] = seen.get(ip, 0) + 1
 
     # Nginx proxy log (real client IPs for WS/gRPC through nginx)
+    # truncate=False: keep entries so long-lived connections stay "online"
+    # Auto-truncates when file exceeds 2MB
     proto_seen: dict[str, dict[str, int]] = {}
-    for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES):
+    for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES, truncate=False):
         line = line.strip()
         if not line:
             continue
