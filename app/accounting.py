@@ -20,7 +20,7 @@ import time
 from . import config, state, engine, sysmetrics, axiom_logs
 
 _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
-_PROXY_IP_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)$")
+_PROXY_LINE_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+(/\S+)$")
 
 
 def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
@@ -88,15 +88,21 @@ def _parse_realtime_ips() -> None:
             seen[ip] = seen.get(ip, 0) + 1
 
     # Nginx proxy log (real client IPs for WS/gRPC through nginx)
+    proto_seen: dict[str, dict[str, int]] = {}
     for line in _read_log_tail(config.PROXY_ACCESS_LOG, config.IP_LOG_MAX_BYTES):
         line = line.strip()
         if not line:
             continue
-        m = _PROXY_IP_RE.match(line)
+        m = _PROXY_LINE_RE.match(line)
         if m:
-            ip = m.group(1)
+            ip, uri = m.group(1), m.group(2)
             if ip != "127.0.0.1" and not ip.startswith("100.64.") and ip != "-":
                 seen[ip] = seen.get(ip, 0) + 1
+                proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
+                if proto:
+                    proto_seen.setdefault(ip, {})[proto] = (
+                        proto_seen.get(ip, {}).get(proto, 0) + 1
+                    )
 
     if not seen:
         return
@@ -120,6 +126,9 @@ def _parse_realtime_ips() -> None:
                 state.IP_STATS[ip] = rec
             rec["last"] = now
             rec["conns"] = rec.get("conns", 0) + hits
+            ip_proto = proto_seen.get(ip)
+            if ip_proto:
+                rec["proto"] = ip_proto
             state.ACTIVE_IPS.add(ip)
 
 
