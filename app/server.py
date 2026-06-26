@@ -374,7 +374,7 @@ def build_app() -> FastAPI:
                 pr = rec.get("proto", {})
                 if pr.get("ws"):
                     ip_ws += 1
-                elif pr.get("grpc"):
+                if pr.get("grpc"):
                     ip_grpc += 1
         sys = state.SYS
         return {

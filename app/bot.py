@@ -231,7 +231,7 @@ async def _dash_text() -> str:
                 continue
             pr = rec.get("proto", {})
             if pr.get("ws"): ipw += 1
-            elif pr.get("grpc"): ipg += 1
+            if pr.get("grpc"): ipg += 1
     online = state.online_count()
     up_bps = down_bps = 0
     if hist:
@@ -293,19 +293,22 @@ def _online_ips_text() -> str:
     with state.lock:
         entries = []
         for ip, rec in state.IP_STATS.items():
-            if now - rec.get("last", 0) > 120:
+            if now - rec.get("last", 0) > config.ONLINE_WINDOW:
                 continue
             first = rec.get("first_seen", rec.get("last", now))
             dur = int(now - first)
-            entries.append((ip, dur))
+            pr = rec.get("proto", {})
+            proto = "gRPC" if pr.get("grpc") else "WS" if pr.get("ws") else ""
+            entries.append((ip, dur, proto))
     if not entries:
         return "🟢 <b>IPهای آنلاین</b>\n\nهیچ IP فعالی در ۲ دقیقه اخیر."
     entries.sort(key=lambda x: -x[1])
     lines = [f"🟢 <b>IPهای آنلاین</b> ({len(entries)})\n"]
-    for i, (ip, dur) in enumerate(entries[:30], 1):
+    for i, (ip, dur, proto) in enumerate(entries[:30], 1):
         name, flag = geo.lookup_country(ip)
         country = f" {flag} {_esc(name)}" if name else ""
-        lines.append(f"{i}. <code>{_esc(ip)}</code>{country} — {util.fmt_duration(dur)}")
+        tag = f" [{proto}]" if proto else ""
+        lines.append(f"{i}. <code>{_esc(ip)}</code>{country}{tag} — {util.fmt_duration(dur)}")
     return "\n".join(lines)
 
 
