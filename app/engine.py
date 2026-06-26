@@ -256,7 +256,17 @@ def build_config() -> dict:
                 "0": {
                     "statsUserUplink": True,
                     "statsUserDownlink": True,
-                    "handshake": 4,  # Fail fast on bad clients
+                    "handshake": 4,        # Fail fast on bad clients
+                    # v3.6: Critical RAM savers for speed-test scenarios
+                    # bufferSize: Xray's internal per-connection buffer (MB).
+                    #   2MB supports ~50Mbps with 300ms RTT (covers most Iran users)
+                    #   without causing RAM spikes during speed tests.
+                    "bufferSize": 2,
+                    # connIdle: close idle connections after 60s (not too aggressive)
+                    "connIdle": 60,
+                    # uplinkOnly/downlinkOnly: half-closed connection timeout.
+                    "uplinkOnly": 15,
+                    "downlinkOnly": 15,
                 }
             },
             "system": {

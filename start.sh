@@ -23,12 +23,15 @@ if command -v sysctl >/dev/null 2>&1; then
     sysctl -w net.ipv4.tcp_fastopen=3 2>/dev/null || true
     sysctl -w net.ipv4.tcp_slow_start_after_idle=0 2>/dev/null || true
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
-    # v3.5: Ultra-low buffers for 100+ concurrent users (4MB max per connection)
-    sysctl -w net.ipv4.tcp_rmem="4096 32768 4194304" 2>/dev/null || true
-    sysctl -w net.ipv4.tcp_wmem="4096 32768 4194304" 2>/dev/null || true
-    sysctl -w net.core.rmem_max=4194304 2>/dev/null || true
-    sysctl -w net.core.wmem_max=4194304 2>/dev/null || true
-    sysctl -w net.core.somaxconn=1024 2>/dev/null || true
+    # v3.6: 2MB buffers (was 4MB) — speed-test proof for 100+ users
+    sysctl -w net.ipv4.tcp_rmem="4096 16384 2097152" 2>/dev/null || true
+    sysctl -w net.ipv4.tcp_wmem="4096 16384 2097152" 2>/dev/null || true
+    sysctl -w net.core.rmem_max=2097152 2>/dev/null || true
+    sysctl -w net.core.wmem_max=2097152 2>/dev/null || true
+    sysctl -w net.core.somaxconn=512 2>/dev/null || true
+    # v3.6: Recycle connections faster
+    sysctl -w net.ipv4.tcp_fin_timeout=15 2>/dev/null || true
+    sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || true
     echo "[boot] network tuning applied (or skipped if unprivileged)"
 fi
 
