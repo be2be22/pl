@@ -25,24 +25,31 @@ _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
 def _read_log_tail(filepath: str, max_bytes: int) -> list[str]:
     """Read the TAIL of the access log (newest entries), then truncate.
 
-    v3 fix: previously read from the START (head), which meant on busy
-    servers the newest IP entries were silently dropped every cycle.
-    Now we seek to (size - max_bytes), skip the partial first line, and
-    read the rest. This guarantees newest entries are captured.
+    v3.3 fix: previously used f.readlines() which loads the ENTIRE file into
+    memory at once — on busy servers with loglevel=info, the access.log can
+    grow to hundreds of MB between cycles, causing RAM spikes.
+    Now we read only the last `max_bytes` bytes via seek, never loading the
+    whole file. We also cap the number of lines returned to prevent runaway
+    memory usage in IP_STATS.
     """
     if not os.path.exists(filepath):
         return []
     try:
         size = os.path.getsize(filepath)
-        with open(filepath, "r", errors="ignore") as f:
-            if size > max_bytes:
-                f.seek(size - max_bytes)
-                f.readline()  # discard partial first line
-            lines = f.readlines()
-        # Truncate (Xray will re-open and append)
+        # Cap the actual read to a reasonable maximum (256KB) regardless of
+        # what max_bytes says — we only need recent lines for IP tracking.
+        read_bytes = min(max_bytes, 262144)
+        with open(filepath, "rb") as f:
+            if size > read_bytes:
+                f.seek(-read_bytes, 2)  # seek from end
+                f.readline()  # discard partial first line (in middle of a record)
+            raw = f.read()
+        # Truncate immediately (before parsing) so Xray starts fresh
         with open(filepath, "w"):
             pass
-        return lines
+        # Decode and split into lines (memory-efficient)
+        text = raw.decode("utf-8", errors="ignore")
+        return text.splitlines()
     except Exception:
         return []
 

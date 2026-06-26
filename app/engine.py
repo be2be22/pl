@@ -36,17 +36,22 @@ def get_logs() -> list[str]:
 
 
 def _read_stderr(proc: subprocess.Popen) -> None:
-    """Background thread: read stderr lines, queue them, log critical ones."""
+    """Background thread: read stderr lines, queue only errors/warnings.
+
+    v3.3: with loglevel=warning, stderr volume is much lower. But we still
+    filter to only queue lines that contain error/failed/panic to keep
+    _log_queue (and Axiom shipping) lean.
+    """
     try:
         if proc.stderr:
             for line in proc.stderr:
                 clean = line.strip()
                 if not clean:
                     continue
-                _log_queue.append(clean)
                 low = clean.lower()
-                # Only escalate real errors to admin-visible log
+                # Only queue lines that are actual errors (skip warnings/info)
                 if "error" in low or "failed" in low or "panic" in low:
+                    _log_queue.append(clean)
                     state.log_error(f"XRAY: {clean[:200]}")
     except Exception:
         pass
@@ -107,11 +112,19 @@ def _active(u: dict, uid: str) -> bool:
     return True
 
 
-def _ws_inbound(clients: list) -> dict:
+def _ws_inbound(clients: list, port: int | None = None, tag: str = "ws",
+                listen: str = "127.0.0.1") -> dict:
+    """VLESS + WebSocket inbound.
+
+    v3.3: accepts custom port and tag so we can spawn extra WS listeners
+    on alternate ports (e.g. 2083) for users whose ISP blocks 443.
+    Extra ports listen on 0.0.0.0 (direct, no nginx) since nginx only
+    listens on the main PORT.
+    """
     return {
-        "tag": "ws",
-        "listen": "127.0.0.1",
-        "port": config.WS_PORT,
+        "tag": tag,
+        "listen": listen,
+        "port": port if port is not None else config.WS_PORT,
         "protocol": "vless",
         "settings": {"clients": clients, "decryption": "none"},
         "streamSettings": {
@@ -208,6 +221,16 @@ def build_config() -> dict:
         _api_inbound(),
         _ws_inbound(ws_clients),
     ]
+    # v3.3: Extra WS inbounds on alternate ports (for users whose ISP blocks 443)
+    # Each extra port gets its own tag so Xray API add/remove works per-tag.
+    # These listen on 0.0.0.0 (direct, no nginx) since nginx only proxies PORT.
+    # NOTE: Without TLS termination by nginx, these ports serve plain WS.
+    # For TLS on extra ports, you'd need a separate TLS cert or use Reality instead.
+    for extra_port in config.EXTRA_WS_PORTS:
+        inbounds.append(
+            _ws_inbound(ws_clients, port=extra_port, tag=f"ws{extra_port}",
+                       listen="0.0.0.0")
+        )
     # Only include gRPC inbound if there are clients (avoids empty listener)
     if grpc_clients:
         inbounds.append(_grpc_inbound(grpc_clients))
@@ -215,13 +238,18 @@ def build_config() -> dict:
 
     # Apply sockopt to all transport inbounds (skip api inbound)
     for ib in inbounds:
-        if ib.get("tag") in ("ws", "grpc", "reality"):
+        tag = ib.get("tag", "")
+        # Match "ws", "ws2083", "grpc", "reality" etc.
+        if tag == "ws" or tag.startswith("ws") or tag in ("grpc", "reality"):
             ss = ib.setdefault("streamSettings", {})
             ss.setdefault("sockopt", {}).update(inbound_sockopt)
 
     return {
         "log": {
-            "loglevel": "info",  # needed for access log IP extraction
+            # v3.3: loglevel=warning (was info) — info floods stderr with
+            # connection logs that consume CPU/RAM via _read_stderr thread.
+            # access log (separate file) still captures accepted IPs.
+            "loglevel": "warning",
             "access": config.CORE_CFG_ACCESS_LOG,
             "dnsLog": False,
         },
@@ -429,14 +457,22 @@ async def _api(*args: str, timeout: int = 5) -> tuple[int, str]:
 
 
 async def hot_add(uid: str) -> bool:
-    """Add user to running Xray via API. Returns True if all protocols OK."""
+    """Add user to running Xray via API. Returns True if all protocols OK.
+
+    v3.3: Also adds user to extra WS inbounds (ws2083, etc.) if configured.
+    """
     with state.lock:
         u = state.USERS.get(uid)
         if not u:
             return False
         protos = list(u.get("protocols", ["ws", "grpc", "reality"]))
+    # Build full tag list: original protos + extra WS port tags
+    tags = list(protos)
+    if "ws" in protos:
+        for extra_port in config.EXTRA_WS_PORTS:
+            tags.append(f"ws{extra_port}")
     ok = True
-    for tag in protos:
+    for tag in tags:
         args = ["adu", f"-tag={tag}", f"-id={uid}", f"-email={uid}"]
         if tag == "reality":
             args.append("-flow=xtls-rprx-vision")
@@ -447,8 +483,14 @@ async def hot_add(uid: str) -> bool:
 
 
 async def hot_remove(uid: str) -> None:
-    """Remove user from running Xray via API. Ignores 'not found' (rc=2)."""
-    for tag in ("ws", "grpc", "reality"):
+    """Remove user from running Xray via API. Ignores 'not found' (rc=2).
+
+    v3.3: Also removes from extra WS inbounds.
+    """
+    tags = ["ws", "grpc", "reality"]
+    for extra_port in config.EXTRA_WS_PORTS:
+        tags.append(f"ws{extra_port}")
+    for tag in tags:
         await _api("rmu", f"-tag={tag}", f"-email={uid}", timeout=4)
 
 

@@ -42,6 +42,17 @@ WS_PATH: str = _env("WS_PATH", "/ws")
 GRPC_PORT: int = 18081
 GRPC_PATH: str = _env("GRPC_PATH", "/grpc")  # serviceName in gRPC path
 
+# v3.3: Alternative ports for VLESS+WS+TLS
+# Some users have 443 blocked by ISP. These extra ports listen on the SAME
+# ws inbound (same clients, same path) but on a different TCP port.
+# Configure EXPOSED_PORTS as comma-separated list, e.g. "2083,2053,2087"
+# Railway must have these ports TCP-proxied for this to work externally.
+EXTRA_WS_PORTS: list[int] = [
+    int(p.strip())
+    for p in _env("EXTRA_WS_PORTS", "2083").split(",")
+    if p.strip().isdigit()
+]
+
 # ── admin auth ───────────────────────────────────────────────────────
 # SECURITY: no default password. Startup fails if ADMIN_PASSWORD not set
 # AND no persisted hash exists yet (first-run).
@@ -58,7 +69,10 @@ CORE_BIN: str = _env("CORE_BIN", "/usr/local/bin/core")
 REALITY_APP_PORT: int = _int("RAILWAY_TCP_APPLICATION_PORT", 18443)
 TCP_PROXY_DOMAIN: str = _env("RAILWAY_TCP_PROXY_DOMAIN")
 TCP_PROXY_PORT: str = _env("RAILWAY_TCP_PROXY_PORT", "18443")
-REALITY_DEST: str = _env("REALITY_DEST", "www.cloudflare.com:443")
+# v3.3: default Reality dest changed to www.microsoft.com (Azure CDN with
+# global PoPs, often lower latency than Cloudflare from Iran).
+# Alternatives to try (set via env): www.apple.com, www.tesla.com, www.samsung.com
+REALITY_DEST: str = _env("REALITY_DEST", "www.microsoft.com:443")
 XRAY_VERSION: str = _env("XRAY_VERSION", "v25.3.6")  # pinned for reproducibility
 
 # ── GitHub state sync ────────────────────────────────────────────────
