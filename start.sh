@@ -23,11 +23,12 @@ if command -v sysctl >/dev/null 2>&1; then
     sysctl -w net.ipv4.tcp_fastopen=3 2>/dev/null || true
     sysctl -w net.ipv4.tcp_slow_start_after_idle=0 2>/dev/null || true
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
-    sysctl -w net.ipv4.tcp_rmem="4096 87380 67108864" 2>/dev/null || true
-    sysctl -w net.ipv4.tcp_wmem="4096 65536 67108864" 2>/dev/null || true
-    sysctl -w net.core.rmem_max=67108864 2>/dev/null || true
-    sysctl -w net.core.wmem_max=67108864 2>/dev/null || true
-    sysctl -w net.core.somaxconn=8192 2>/dev/null || true
+    # v3.4: Reduced buffer sizes (was 64MB, now 16MB) to prevent RAM spikes
+    sysctl -w net.ipv4.tcp_rmem="4096 87380 16777216" 2>/dev/null || true
+    sysctl -w net.ipv4.tcp_wmem="4096 65536 16777216" 2>/dev/null || true
+    sysctl -w net.core.rmem_max=16777216 2>/dev/null || true
+    sysctl -w net.core.wmem_max=16777216 2>/dev/null || true
+    sysctl -w net.core.somaxconn=2048 2>/dev/null || true
     echo "[boot] network tuning applied (or skipped if unprivileged)"
 fi
 

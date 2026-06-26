@@ -42,14 +42,13 @@ WS_PATH: str = _env("WS_PATH", "/ws")
 GRPC_PORT: int = 18081
 GRPC_PATH: str = _env("GRPC_PATH", "/grpc")  # serviceName in gRPC path
 
-# v3.3: Alternative ports for VLESS+WS+TLS
-# Some users have 443 blocked by ISP. These extra ports listen on the SAME
-# ws inbound (same clients, same path) but on a different TCP port.
-# Configure EXPOSED_PORTS as comma-separated list, e.g. "2083,2053,2087"
-# Railway must have these ports TCP-proxied for this to work externally.
-EXTRA_WS_PORTS: list[int] = [
+# v3.4: Extra ports for VLESS+Reality (for users whose ISP blocks 443)
+# Reality has its own TLS, so extra ports don't need nginx.
+# Configure as comma-separated list, e.g. "2083,2053,2087"
+# Railway must TCP-proxy these ports for external access.
+EXTRA_REALITY_PORTS: list[int] = [
     int(p.strip())
-    for p in _env("EXTRA_WS_PORTS", "2083").split(",")
+    for p in _env("EXTRA_REALITY_PORTS", "2083").split(",")
     if p.strip().isdigit()
 ]
 

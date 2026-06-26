@@ -227,16 +227,12 @@ async def trim_dataset_before_date(before_date_str: str) -> dict:
         "Content-Type": "application/json",
     }
     try:
-        # NOTE: httpx.AsyncClient.delete() does NOT accept json= parameter.
-        # We must serialize manually and pass via content= with proper headers.
-        import json as _json
-        body = _json.dumps(payload).encode("utf-8")
+        # v3.4: Axiom trim API uses POST, not DELETE (HTTP 405 error fix)
         async with httpx.AsyncClient(timeout=30) as trim_client:
-            r = await trim_client.request(
-                "DELETE",
+            r = await trim_client.post(
                 f"{AXIOM_API_URL}/v2/datasets/{config.AXIOM_DATASET}/trim",
                 headers=headers,
-                content=body,
+                json=payload,
             )
             if r.status_code in (200, 202, 204):
                 return {

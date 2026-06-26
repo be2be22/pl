@@ -158,12 +158,18 @@ def _grpc_inbound(clients: list) -> dict:
     }
 
 
-def _reality_inbound(clients: list) -> dict:
+def _reality_inbound(clients: list, port: int | None = None, tag: str = "reality") -> dict:
+    """VLESS + Reality inbound.
+
+    v3.4: accepts custom port and tag so we can spawn extra Reality listeners
+    on alternate ports (e.g. 2083) for users whose ISP blocks 443.
+    Reality has its own TLS, so no nginx needed for these ports.
+    """
     r = state.STATS["reality"]
     return {
-        "tag": "reality",
+        "tag": tag,
         "listen": "0.0.0.0",
-        "port": config.REALITY_APP_PORT,
+        "port": port if port is not None else config.REALITY_APP_PORT,
         "protocol": "vless",
         "settings": {"clients": clients, "decryption": "none"},
         "streamSettings": {
@@ -221,26 +227,23 @@ def build_config() -> dict:
         _api_inbound(),
         _ws_inbound(ws_clients),
     ]
-    # v3.3: Extra WS inbounds on alternate ports (for users whose ISP blocks 443)
-    # Each extra port gets its own tag so Xray API add/remove works per-tag.
-    # These listen on 0.0.0.0 (direct, no nginx) since nginx only proxies PORT.
-    # NOTE: Without TLS termination by nginx, these ports serve plain WS.
-    # For TLS on extra ports, you'd need a separate TLS cert or use Reality instead.
-    for extra_port in config.EXTRA_WS_PORTS:
-        inbounds.append(
-            _ws_inbound(ws_clients, port=extra_port, tag=f"ws{extra_port}",
-                       listen="0.0.0.0")
-        )
     # Only include gRPC inbound if there are clients (avoids empty listener)
     if grpc_clients:
         inbounds.append(_grpc_inbound(grpc_clients))
     inbounds.append(_reality_inbound(re_clients))
+    # v3.4: Extra Reality inbounds on alternate ports (e.g. 2083)
+    # Reality has its own TLS, so these work without nginx.
+    # Each extra port gets its own tag so Xray API add/remove works per-tag.
+    for extra_port in config.EXTRA_REALITY_PORTS:
+        inbounds.append(
+            _reality_inbound(re_clients, port=extra_port, tag=f"reality{extra_port}")
+        )
 
     # Apply sockopt to all transport inbounds (skip api inbound)
     for ib in inbounds:
         tag = ib.get("tag", "")
-        # Match "ws", "ws2083", "grpc", "reality" etc.
-        if tag == "ws" or tag.startswith("ws") or tag in ("grpc", "reality"):
+        # Match "ws", "grpc", "reality", "reality2083" etc.
+        if tag in ("ws", "grpc") or tag.startswith("ws") or tag.startswith("reality"):
             ss = ib.setdefault("streamSettings", {})
             ss.setdefault("sockopt", {}).update(inbound_sockopt)
 
@@ -253,19 +256,17 @@ def build_config() -> dict:
             "access": config.CORE_CFG_ACCESS_LOG,
             "dnsLog": False,
         },
-        # v3.2: Optimized DNS — DoH (Cloudflare + Google)
-        # Reduces DNS resolution from ~500ms (UDP) to ~50ms (cached DoH).
-        # NOTE: geosite:ir is NOT in the standard geosite.dat — removed to
-        #       avoid "list not found in geosite.dat: IR" error.
-        #       Iranian domains will be resolved by Cloudflare DoH (fine for proxy use).
+        # v3.4: DNS — simplified to plain UDP (was DoH which consumed ~50MB RAM)
+        # DoH client in Xray creates an internal HTTP/2 connection pool that
+        # significantly increases memory usage on small containers.
+        # Plain UDP to 1.1.1.1 is nearly as fast (cached after first query)
+        # and uses minimal RAM. Xray's built-in cache handles repeated lookups.
         "dns": {
             "servers": [
-                # Cloudflare DoH — fast global resolver
-                "https://1.1.1.1/dns-query",
-                # Fallback — Google DNS
+                "1.1.1.1",
                 "8.8.8.8",
             ],
-            "queryStrategy": "UseIPv4",  # Skip AAAA — avoids v6 black-hole delays
+            "queryStrategy": "UseIPv4",
             "disableCache": False,
             "disableFallback": False,
         },
@@ -459,22 +460,22 @@ async def _api(*args: str, timeout: int = 5) -> tuple[int, str]:
 async def hot_add(uid: str) -> bool:
     """Add user to running Xray via API. Returns True if all protocols OK.
 
-    v3.3: Also adds user to extra WS inbounds (ws2083, etc.) if configured.
+    v3.4: Also adds user to extra Reality inbounds (reality2083, etc.) if configured.
     """
     with state.lock:
         u = state.USERS.get(uid)
         if not u:
             return False
         protos = list(u.get("protocols", ["ws", "grpc", "reality"]))
-    # Build full tag list: original protos + extra WS port tags
+    # Build full tag list: original protos + extra port tags
     tags = list(protos)
-    if "ws" in protos:
-        for extra_port in config.EXTRA_WS_PORTS:
-            tags.append(f"ws{extra_port}")
+    if "reality" in protos:
+        for extra_port in config.EXTRA_REALITY_PORTS:
+            tags.append(f"reality{extra_port}")
     ok = True
     for tag in tags:
         args = ["adu", f"-tag={tag}", f"-id={uid}", f"-email={uid}"]
-        if tag == "reality":
+        if tag == "reality" or tag.startswith("reality"):
             args.append("-flow=xtls-rprx-vision")
         rc, _ = await _api(*args)
         if rc != 0:
@@ -485,11 +486,11 @@ async def hot_add(uid: str) -> bool:
 async def hot_remove(uid: str) -> None:
     """Remove user from running Xray via API. Ignores 'not found' (rc=2).
 
-    v3.3: Also removes from extra WS inbounds.
+    v3.4: Also removes from extra Reality inbounds.
     """
     tags = ["ws", "grpc", "reality"]
-    for extra_port in config.EXTRA_WS_PORTS:
-        tags.append(f"ws{extra_port}")
+    for extra_port in config.EXTRA_REALITY_PORTS:
+        tags.append(f"reality{extra_port}")
     for tag in tags:
         await _api("rmu", f"-tag={tag}", f"-email={uid}", timeout=4)
 
