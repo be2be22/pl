@@ -20,7 +20,7 @@ import time
 from . import config, state, engine, sysmetrics, axiom_logs
 
 _ACCEPTED_RE = re.compile(r" (\d+\.\d+\.\d+\.\d+):\d+ accepted ")
-_PROXY_LINE_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+(/\S+)$")
+_PROXY_LINE_RE = re.compile(r"^(\S+)\s+(/\S+)$")
 
 
 def _read_log_tail(filepath: str, max_bytes: int, truncate: bool = True) -> list[str]:
@@ -101,14 +101,17 @@ def _parse_realtime_ips() -> None:
             continue
         m = _PROXY_LINE_RE.match(line)
         if m:
-            ip, uri = m.group(1), m.group(2)
-            if ip != "127.0.0.1" and not ip.startswith("100.64.") and ip != "-":
-                seen[ip] = seen.get(ip, 0) + 1
-                proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
-                if proto:
-                    proto_seen.setdefault(ip, {})[proto] = (
-                        proto_seen.get(ip, {}).get(proto, 0) + 1
-                    )
+            raw_ip, uri = m.group(1), m.group(2)
+            # X-Forwarded-For may be comma-separated; first = real client
+            ip = raw_ip.split(",")[0].strip()
+            if not ip or ip == "-" or ip.startswith("100.64.") or ip == "127.0.0.1":
+                continue
+            seen[ip] = seen.get(ip, 0) + 1
+            proto = "ws" if "/ws" in uri else "grpc" if "/grpc" in uri else ""
+            if proto:
+                proto_seen.setdefault(ip, {})[proto] = (
+                    proto_seen.get(ip, {}).get(proto, 0) + 1
+                )
 
     if not seen:
         return
