@@ -63,7 +63,7 @@ def _extract_client_ip(line: str) -> str | None:
     if not m:
         return None
     ip = m.group(1)
-    if ip == "127.0.0.1" or ip.startswith("100.64.") or ip == "-":
+    if ip.startswith("100.64.") or ip == "-":
         return None
     return ip
 
@@ -326,7 +326,7 @@ async def loop() -> None:
             up_delta = down_delta = 0
 
             if data:
-                user_updates: list = []
+                merged: dict[tuple[str, str], int] = {}
                 for stat in data.get("stat", []):
                     name = stat.get("name", "")
                     value = int(stat.get("value", "0") or "0")
@@ -336,10 +336,11 @@ async def loop() -> None:
                     if len(parts) != 4 or parts[2] != "traffic":
                         continue
                     if parts[0] == "user":
-                        user_updates.append((parts[1], parts[3], value))
+                        key = (parts[1], parts[3])
+                        merged[key] = merged.get(key, 0) + value
 
                 with state.lock:
-                    for uid, kind, value in user_updates:
+                    for (uid, kind), value in merged.items():
                         if uid not in state.USERS:
                             continue
                         rec = state.STATS["users"].setdefault(
