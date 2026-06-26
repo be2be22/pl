@@ -35,7 +35,7 @@ async def ensure_dataset() -> bool:
     try:
         client = await axiom_client.get()
         r = await client.get(
-            f"{AXIOM_API_URL}/v2/datasets/{config.AXIOM_DATASET}",
+            f"{AXIOM_API_URL}/v1/datasets/{config.AXIOM_DATASET}",
             headers=headers,
         )
         if r.status_code == 200:
@@ -43,7 +43,7 @@ async def ensure_dataset() -> bool:
         if r.status_code == 404:
             state.log_error("Axiom: Dataset not found. Creating it...")
             r_create = await client.post(
-                f"{AXIOM_API_URL}/v2/datasets",
+                f"{AXIOM_API_URL}/v1/datasets",
                 headers=headers,
                 json={
                     "name": config.AXIOM_DATASET,
