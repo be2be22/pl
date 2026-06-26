@@ -104,7 +104,10 @@ def _guard(request: Request) -> None:
         raise HTTPException(401, "unauthorized")
 
 
-def _user_view(uid: str, u: dict) -> dict:
+def _user_view(uid: str, u: dict | None) -> dict | None:
+    """Build a user view dict. Returns None if u is None (user deleted)."""
+    if u is None:
+        return None
     with state.lock:
         rec = state.STATS["users"].get(uid, {"up": 0, "down": 0})
         rec_copy = dict(rec)
@@ -114,7 +117,7 @@ def _user_view(uid: str, u: dict) -> dict:
         "label": u.get("label", ""),
         "sid": u.get("sid", ""),
         "status": u.get("status", "active"),
-        "protocols": u.get("protocols", ["ws", "reality"]),
+        "protocols": u.get("protocols", ["ws", "grpc", "reality"]),
         "created": u.get("created", 0),
         "expiry": u.get("expiry", 0),
         "quota": u.get("quota", 0),
@@ -241,11 +244,16 @@ async def lifespan(app: FastAPI):
     ]
 
     if notify.enabled():
-        _track(notify.send(f"🟢 Aurora v3.0 آنلاین شد\nکاربران: {len(state.USERS)}"))
+        _track(notify.send(f"🟢 Aurora v3.1 آنلاین شد\nکاربران: {len(state.USERS)}"))
 
     try:
         yield
     finally:
+        # Cancel accounting background tasks (cleanup, ip_tracker, axiom sends)
+        try:
+            await accounting.cancel_all()
+        except Exception:
+            pass
         # Cancel all tracked tasks
         for t in list(_all_tasks):
             t.cancel()
@@ -429,7 +437,11 @@ def build_app() -> FastAPI:
         size = max(1, min(size, 500))
         with state.lock:
             items = list(state.USERS.items())
-            views = [_user_view(uid, u) for uid, u in items]
+            # Snapshot each user dict under lock to avoid race during view build
+            snapshots = [(uid, dict(u)) for uid, u in items]
+        views = [_user_view(uid, snap) for uid, snap in snapshots]
+        # Filter out any None results (shouldn't happen, but defensive)
+        views = [v for v in views if v is not None]
         # Flat list for backward compatibility with the web frontend
         if page is None:
             return views
@@ -486,7 +498,10 @@ def build_app() -> FastAPI:
             raise HTTPException(404)
         with state.lock:
             u = state.USERS.get(uid)
-            return {"ok": True, **_user_view(uid, u)}
+        view = _user_view(uid, u)
+        if view is None:
+            raise HTTPException(404)
+        return {"ok": True, **view}
 
     @app.post(_PFX + "/api/users/{uid}/reset")
     async def reset_user(uid: str, request: Request):
@@ -548,8 +563,8 @@ def build_app() -> FastAPI:
     # ── subscription endpoint (public) ──────────────────────────────
     @app.get("/s/{sid}")
     async def subscription(sid: str, request: Request):
-        uid = state.SID_INDEX.get(sid)
         with state.lock:
+            uid = state.SID_INDEX.get(sid)
             u = state.USERS.get(uid) if uid else None
             u_copy = dict(u) if u else None
         if not u_copy:

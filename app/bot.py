@@ -371,13 +371,14 @@ def _user_detail(uid: str) -> tuple[str, list] | None:
 async def _send_user_config(chat_id: int, uid: str) -> None:
     with state.lock:
         u = state.USERS.get(uid)
-    if not u:
+        u_copy = dict(u) if u else None
+    if not u_copy:
         await send(chat_id, "کاربر یافت نشد.")
         return
-    data = subs.build_links(uid, u, _domain())
+    data = subs.build_links(uid, u_copy, _domain())
     body = "\n\n".join(data["links"]) or "پروتکلی فعال نیست"
     txt = (
-        f"📥 <b>کانفیگ {_esc(u.get('label', ''))}</b>\n\n"
+        f"📥 <b>کانفیگ {_esc(u_copy.get('label', ''))}</b>\n\n"
         f"🔗 اشتراک: <code>{_esc(data['sub_link'])}</code>\n\n"
         f"<pre>{_esc(body)}</pre>"
     )

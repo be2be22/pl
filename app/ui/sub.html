@@ -67,7 +67,7 @@ body::after{width:48vw;height:48vw;bottom:-16vw;left:-10vw;background:radial-gra
     </div>
     <div class="cfg" id="cfgs"></div>
   </div>
-  <div class="foot">Powered by Aurora Edge v2.0</div>
+  <div class="foot">Powered by Aurora Edge v3.1</div>
 </div>
 <script>
 /*__SUB_DATA__*/
@@ -85,7 +85,11 @@ document.getElementById("qr").innerHTML = D.qr || "";
 document.getElementById("sub").textContent = D.sub_link || "";
 const cfgs=document.getElementById("cfgs");
 cfgs.innerHTML = (D.links||[]).map((lnk,i)=>{
-  const name=/Reality/.test(lnk)?"Reality (پرسرعت)":(/WS-Main/.test(lnk)?"WebSocket (اصلی)":`WebSocket (${lnk.split("@")[1].split(":")[0]})`);
+  let name;
+  if(lnk.indexOf("security=reality")>-1){name="Reality (پرسرعت)";}
+  else if(lnk.indexOf("type=grpc")>-1){name="gRPC (پرسرعت موبایل)";}
+  else if(lnk.indexOf("WS-Main")>-1||lnk.indexOf("ws-main")>-1){name="WebSocket (اصلی)";}
+  else{try{name="WebSocket ("+lnk.split("@")[1].split(":")[0]+")";}catch(_){name="WebSocket";}}
   return `<span class="label">${name}</span><div class="code" id="c${i}">${lnk.replace(/</g,"&lt;")}</div><button class="btn ghost sm" data-c="c${i}">کپی این کانفیگ</button>`;
 }).join("");
 function copy(t){navigator.clipboard.writeText(t).then(()=>flash("کپی شد ✅")).catch(()=>{const a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();document.execCommand("copy");a.remove();flash("کپی شد ✅");});}

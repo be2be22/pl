@@ -152,39 +152,45 @@ async def _enforce_time_limits() -> bool:
 
 
 async def _cleanup_task() -> None:
-    """Periodic RAM hygiene: stale LAST_ACTIVE, orphan stats, dead alerts."""
+    """Periodic RAM hygiene: stale LAST_ACTIVE, orphan stats, dead alerts.
+
+    Wrapped in try/except so a single exception doesn't kill the loop forever.
+    """
     while True:
         await asyncio.sleep(config.CLEANUP_INTERVAL)
-        now = time.time()
-        with state.lock:
-            # Stale LAST_ACTIVE entries (>5min inactive)
-            stale_users = [
-                uid for uid, t in state.LAST_ACTIVE.items() if now - t > 300
-            ]
-            for uid in stale_users:
-                state.LAST_ACTIVE.pop(uid, None)
-            # Alert keys for deleted users
-            stale_alerts = [
-                k
-                for k in state.ALERTS_SENT
-                if ":" in k and k.split(":", 1)[1] not in state.USERS
-            ]
-            for k in stale_alerts:
-                state.ALERTS_SENT.discard(k)
-            # Orphan stats entries
-            orphan = [uid for uid in state.STATS["users"] if uid not in state.USERS]
-            for uid in orphan:
-                state.STATS["users"].pop(uid, None)
-                state.LAST_ACTIVE.pop(uid, None)
-            # Evict stale IP_STATS entries (not just ACTIVE_IPS)
-            stale_ips = [
-                ip
-                for ip, rec in state.IP_STATS.items()
-                if now - rec.get("last", 0) > config.ONLINE_WINDOW * 2
-            ]
-            for ip in stale_ips:
-                state.IP_STATS.pop(ip, None)
-                state.ACTIVE_IPS.discard(ip)
+        try:
+            now = time.time()
+            with state.lock:
+                # Stale LAST_ACTIVE entries (>5min inactive)
+                stale_users = [
+                    uid for uid, t in state.LAST_ACTIVE.items() if now - t > 300
+                ]
+                for uid in stale_users:
+                    state.LAST_ACTIVE.pop(uid, None)
+                # Alert keys for deleted users
+                stale_alerts = [
+                    k
+                    for k in state.ALERTS_SENT
+                    if ":" in k and k.split(":", 1)[1] not in state.USERS
+                ]
+                for k in stale_alerts:
+                    state.ALERTS_SENT.discard(k)
+                # Orphan stats entries
+                orphan = [uid for uid in state.STATS["users"] if uid not in state.USERS]
+                for uid in orphan:
+                    state.STATS["users"].pop(uid, None)
+                    state.LAST_ACTIVE.pop(uid, None)
+                # Evict stale IP_STATS entries (not just ACTIVE_IPS)
+                stale_ips = [
+                    ip
+                    for ip, rec in state.IP_STATS.items()
+                    if now - rec.get("last", 0) > config.ONLINE_WINDOW * 2
+                ]
+                for ip in stale_ips:
+                    state.IP_STATS.pop(ip, None)
+                    state.ACTIVE_IPS.discard(ip)
+        except Exception as e:
+            state.log_error(f"cleanup_task: {e}")
 
 
 async def _alerts_check() -> None:
@@ -263,10 +269,29 @@ async def _safe_send_to_axiom(payload: list, event_type: str) -> None:
         state.log_error(f"axiom send ({event_type}): {e}")
 
 
+# Tracked background tasks (cancelled on shutdown via cancel_all())
+_bg_tasks: set = set()
+
+
+def _spawn(coro) -> None:
+    """Spawn a tracked background task (cancelable via cancel_all)."""
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+async def cancel_all() -> None:
+    """Cancel all accounting background tasks (called on shutdown)."""
+    for t in list(_bg_tasks):
+        t.cancel()
+    if _bg_tasks:
+        await asyncio.gather(*list(_bg_tasks), return_exceptions=True)
+
+
 async def loop() -> None:
     """Main accounting loop: runs forever after a 4s startup grace period."""
-    asyncio.create_task(_cleanup_task())
-    asyncio.create_task(_ip_tracker_loop())
+    _spawn(_cleanup_task())
+    _spawn(_ip_tracker_loop())
 
     await asyncio.sleep(4)
 
@@ -317,11 +342,11 @@ async def loop() -> None:
                         state.LAST_ACTIVE[uid] = time.time()
 
             ts = int(time.time())
-            hist = state.STATS["history"]
-            hist.append(
-                [ts, up_delta // config.SAMPLE_SECS, down_delta // config.SAMPLE_SECS]
-            )
-            # deque(maxlen=...) handles eviction automatically
+            with state.lock:
+                state.STATS["history"].append(
+                    [ts, up_delta // config.SAMPLE_SECS, down_delta // config.SAMPLE_SECS]
+                )
+                # deque(maxlen=...) handles eviction automatically
 
             changed = (up_delta + down_delta) > 0
             if await _enforce_time_limits():
@@ -378,13 +403,9 @@ async def loop() -> None:
             if config.AXIOM_TOKEN:
                 logs = engine.get_logs()
                 if logs:
-                    asyncio.create_task(
-                        _safe_send_to_axiom(logs, "xray_log")
-                    )
+                    _spawn(_safe_send_to_axiom(logs, "xray_log"))
                 if ip_payload:
-                    asyncio.create_task(
-                        _safe_send_to_axiom(ip_payload, "ip_traffic")
-                    )
+                    _spawn(_safe_send_to_axiom(ip_payload, "ip_traffic"))
 
         except Exception as e:
             state.log_error(f"accounting: {e}")

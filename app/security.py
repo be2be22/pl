@@ -54,30 +54,54 @@ def set_password(new_pw: str) -> None:
     state.mark_dirty()
 
 
-# ── sessions (sliding window) ────────────────────────────────────────
+# ── sessions (sliding window + idle timeout) ─────────────────────────
+# Each session tracks both absolute expiry and last-activity timestamp.
+# SESSIONS[token] = [absolute_expiry, last_activity_ts]
 def open_session() -> str:
     """Create a new session. Returns the opaque token."""
     import secrets
     token = secrets.token_urlsafe(32)
+    now = time.time()
     with state.lock:
-        state.SESSIONS[token] = time.time() + config.SESSION_TTL
+        state.SESSIONS[token] = [now + config.SESSION_TTL, now]
     return token
 
 
 def valid_session(token: Optional[str]) -> bool:
-    """Check session validity. Refreshes TTL on success (sliding window)."""
+    """Check session validity.
+
+    Two-layer expiry:
+      1. Absolute TTL (SESSION_TTL) — hard limit from login time, refreshed
+         on each valid request (sliding window).
+      2. Idle TTL (SESSION_IDLE_TTL) — session expires if no activity for
+         this long, even if absolute TTL hasn't been reached.
+    """
     if not token:
         return False
     now = time.time()
     with state.lock:
-        exp = state.SESSIONS.get(token)
-        if not exp:
+        rec = state.SESSIONS.get(token)
+        if not rec:
             return False
-        if now > exp:
+        # Migration safety: old format was float, new format is [abs_exp, last_activity]
+        if isinstance(rec, (int, float)):
+            # Old-format session: validate by absolute expiry only, then upgrade
+            if now > float(rec):
+                state.SESSIONS.pop(token, None)
+                return False
+            state.SESSIONS[token] = [now + config.SESSION_TTL, now]
+            return True
+        abs_exp, last_activity = rec[0], rec[1]
+        # Hard expiry
+        if now > abs_exp:
             state.SESSIONS.pop(token, None)
             return False
-        # Sliding: refresh absolute expiry on each valid request.
-        state.SESSIONS[token] = now + config.SESSION_TTL
+        # Idle expiry (prevents stolen-cookie indefinite refresh)
+        if now - last_activity > config.SESSION_IDLE_TTL:
+            state.SESSIONS.pop(token, None)
+            return False
+        # Sliding: refresh both absolute expiry and last-activity on success
+        state.SESSIONS[token] = [now + config.SESSION_TTL, now]
     return True
 
 
@@ -88,9 +112,19 @@ def close_session(token: Optional[str]) -> None:
 
 
 def gc_sessions() -> None:
+    """Purge expired or idle-timed-out sessions."""
     now = time.time()
     with state.lock:
-        dead = [t for t, e in state.SESSIONS.items() if now > e]
+        dead = []
+        for t, rec in state.SESSIONS.items():
+            if isinstance(rec, (int, float)):
+                # Old format: absolute expiry only
+                if now > float(rec):
+                    dead.append(t)
+            elif isinstance(rec, list) and len(rec) >= 2:
+                # New format: [abs_exp, last_activity]
+                if (now > rec[0]) or (now - rec[1] > config.SESSION_IDLE_TTL):
+                    dead.append(t)
         for t in dead:
             state.SESSIONS.pop(t, None)
 

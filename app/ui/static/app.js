@@ -153,7 +153,8 @@ function renderUsers() {
   if (!list.length) { box.innerHTML = `<div class="card empty">${svg(I.empty, 46)}<div>${allUsers.length ? "کاربری یافت نشد" : "هنوز کاربری نساخته‌اید"}</div></div>`; return; }
   const rows = list.map((u) => {
     const used = u.quota ? Math.min(100, u.used / u.quota * 100) : 0;
-    const protos = u.protocols.map((p) => `<span class="proto-tag">${p === "ws" ? "WS" : "Reality"}</span>`).join("");
+    const protoLabels = { ws: "WS", grpc: "gRPC", reality: "Reality" };
+    const protos = u.protocols.map((p) => `<span class="proto-tag">${protoLabels[p] || p}</span>`).join("");
     const av = (u.label || "?").trim().charAt(0).toUpperCase();
     return `<tr data-uid="${u.uid}">
       <td><div class="uname"><div class="av">${av}</div><div><div>${escapeHtml(u.label)}</div><div style="font-size:11px;color:var(--dim)">${protos}</div></div></div></td>
@@ -217,7 +218,17 @@ function showLinksData(data, label) {
   $("#lk-sub").textContent = data.sub_link;
   loadQR(data.sub_link);
   $("#lk-list").innerHTML = data.links.map((lnk, i) => {
-    const name = /Reality/.test(lnk) ? "Reality" : (/WS-Main/.test(lnk) ? "WS (Main)" : `WS (${lnk.split("@")[1].split(":")[0]})`);
+    let name;
+    if (lnk.includes("security=reality")) {
+      name = "Reality";
+    } else if (lnk.includes("type=grpc")) {
+      name = "gRPC";
+    } else if (lnk.includes("WS-Main") || lnk.includes("ws-main")) {
+      name = "WS (Main)";
+    } else {
+      // WS with custom IP — extract server from URL
+      try { name = `WS (${lnk.split("@")[1].split(":")[0]})`; } catch (_) { name = "WS"; }
+    }
     return `<div class="field"><label>${name}</label><div class="code-box" id="lkc${i}">${escapeHtml(lnk)}</div><button class="btn sm" data-copy="lkc${i}" style="width:100%">کپی</button></div>`;
   }).join("") || '<p style="color:var(--muted);font-size:13px">پروتکلی فعال نیست</p>';
   bindCopy();

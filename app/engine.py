@@ -359,7 +359,11 @@ async def _api(*args: str, timeout: int = 5) -> tuple[int, str]:
 
 async def hot_add(uid: str) -> bool:
     """Add user to running Xray via API. Returns True if all protocols OK."""
-    protos = state.USERS.get(uid, {}).get("protocols", ["ws", "grpc", "reality"])
+    with state.lock:
+        u = state.USERS.get(uid)
+        if not u:
+            return False
+        protos = list(u.get("protocols", ["ws", "grpc", "reality"]))
     ok = True
     for tag in protos:
         args = ["adu", f"-tag={tag}", f"-id={uid}", f"-email={uid}"]
@@ -379,9 +383,11 @@ async def hot_remove(uid: str) -> None:
 
 async def apply_user(uid: str) -> None:
     """Remove-then-re-add user (atomic update for protocol/quota changes)."""
-    u = state.USERS.get(uid)
+    with state.lock:
+        u = state.USERS.get(uid)
+        u_copy = dict(u) if u else None
     await hot_remove(uid)
-    if u and _active(u, uid):
+    if u_copy and _active(u_copy, uid):
         ok = await hot_add(uid)
         if not ok:
             mark_resync()

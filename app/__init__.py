@@ -19,4 +19,4 @@ v3 changelog:
   - fsync after atomic writes
   - debounced local persistence
 """
-__version__ = "3.0.0"
+__version__ = "3.1.0"
